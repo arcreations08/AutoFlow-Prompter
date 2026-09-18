@@ -70,6 +70,6 @@ python app.py
 ## 👨‍💻 Developer & Support
 
 Created & maintained by **ARCreations**.
-
+-     Email: arazacreations@gmail.com
 - 📸 **Instagram**: [@arcreations008](https://www.instagram.com/arcreations008/?utm_source=chatgpt.com)
 - 💬 For custom features, private licenses, or inquiries, reach out directly via Instagram direct message.
