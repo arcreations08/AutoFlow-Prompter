@@ -1,0 +1,61 @@
+========================================================================
+             ARCreations — Google Flow Auto-Prompter (v1.0.0)
+========================================================================
+Instagram Profile: https://www.instagram.com/arcreations008/?utm_source=chatgpt.com
+Support & Updates: @arcreations008
+
+------------------------------------------------------------------------
+📌 SYSTEM REQUIREMENTS:
+------------------------------------------------------------------------
+1. Windows 10 or Windows 11 (64-bit)
+2. Python 3.10, 3.11, or 3.12 installed
+   (Important: Check "Add Python to PATH" during installation)
+3. Google Chrome installed
+
+------------------------------------------------------------------------
+🚀 QUICK START GUIDE (1-CLICK SETUP):
+------------------------------------------------------------------------
+STEP 1: Extract this ZIP folder to any location on your PC.
+STEP 2: Double-click "start.bat".
+        - The first time you run it, it will automatically install 
+          all required libraries and dependencies.
+        - The ARCreations Studio window will launch automatically.
+
+------------------------------------------------------------------------
+🎯 HOW TO USE THE TOOL:
+------------------------------------------------------------------------
+1. SELECT PROFILE:
+   - On the right panel under "PROFILE GMAIL SELECTION", select your 
+     profile (Profile 1, Profile 2, or Profile 3).
+   
+2. LAUNCH CHROME:
+   - Click the "▶ Launch (P1)" button.
+   - Chrome will open. Log into your Google account on flow.google.com.
+   - Once logged in, you only need to log in once! The session is saved.
+
+3. PASTE PROMPTS:
+   - On the left panel ("PROMPTS WORKSPACE"), paste your prompts list 
+     or click "Load .txt File".
+   - Prompts format can be numbered, e.g.:
+       (01-0:4) A cinematic scene of ancient mountains...
+       (02-0:4) Golden sunset over emerald valley...
+
+4. CONFIGURE SETTINGS:
+   - Output folder: Images will be saved automatically to 
+     "Generated_Images/Profile_1" (or your custom chosen folder).
+   - Optional: Add a Character Consistency Tag (e.g. @Character 1).
+   - Cooldown delays: Default safe values are 80s wait, 8s delay.
+
+5. START BATCH:
+   - Click the vibrant "🚀 Start Batch Generation" button!
+   - The bot will type each prompt with human-like typing speed, 
+     wait for generation, download images, and organize them.
+   - You can click "Pause" or "Stop" at any time.
+
+------------------------------------------------------------------------
+🔒 LICENSE & ACCESS:
+------------------------------------------------------------------------
+This software is officially maintained by ARCreations.
+For custom features, licensing, and updates, contact:
+Instagram: @arcreations008
+========================================================================
