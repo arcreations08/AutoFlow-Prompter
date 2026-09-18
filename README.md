@@ -9,12 +9,6 @@
 
 ---
 
-## ✨ Features
-
-- 🎨 **Ultra-Modern Dark Glassmorphism UI**:
-  - Translucent frosted glass panels with glowing neon rose accents (`#f43f5e`).
-  - Interactive micro-animations on all buttons (hover glow, tactile press depression, ambient breathing pulse).
-  - Smooth interpolated progress bar and real-time activity terminal.
 
 - 👥 **Isolated Multi-Profile Architecture**:
   - Run up to **3 independent Chrome instances** simultaneously on dedicated remote debugging ports (`9222`, `9223`, `9224`).
@@ -25,11 +19,7 @@
   - Element-level text dispatch prevents typing interference or keyboard focus stealing when working across multiple windows.
 
 - 🏷️ **Smart Prompt & Filename Parser**:
-  - Automatically identifies numbered & timed prompts (e.g. `(01-0:4)`, `01-0:4`, `02-0:8`).
   - Generates clean, production-ready filenames formatted as `[number]-[duration].png` (e.g., `01-0.4.png`).
-
-- 🛡️ **Account Safety & Protection**:
-  - Built-in natural human-like typing simulation and randomized safe delays between batch generations.
 
 ---
 
@@ -43,7 +33,7 @@
 
 ### Option 2: Run From Source Code
 ```bash
-# 1. Clone or download this repository
+# 1. Download this repository
 git clone https://github.com/Aliairdrops/ARCreations-Flow-Prompter.git
 cd ARCreations-Flow-Prompter
 
