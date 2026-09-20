@@ -30,7 +30,17 @@
 2. Extract the folder anywhere on your Windows PC.
 3. Double-click **`start.bat`**.
    - The launcher will automatically verify dependencies, install missing libraries, and launch the ARCreations Studio window.
+  
+   - ## 📥 Installation & Quick Run
 
+### ⚡ Method 1: Instant 1-Line PowerShell Run (Zero File Downloads!)
+Open **PowerShell** on your Windows PC, paste this single command, and press **Enter**:
+
+irm https://raw.githubusercontent.com/arcreations08/AutoFlow-Prompter/main/install.ps1 | iex
+
+> This automatically downloads the latest release, installs dependencies, and launches .
+>
+> 
 ### Option 2: Run From Source Code
 ```bash
 # 1. Download this repository
