@@ -10,10 +10,16 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTextEdit, QPushButton, QLineEdit, QFileDialog,
     QProgressBar, QSpinBox, QGroupBox, QSplitter, QMessageBox, QFrame,
-    QRadioButton, QButtonGroup, QGraphicsDropShadowEffect
+    QRadioButton, QButtonGroup, QGraphicsDropShadowEffect,
+    QTabWidget, QGridLayout
 )
-from PySide6.QtCore import Qt, Signal, QObject, QThread, QTimer, Property, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QFont, QColor, QPainter, QPixmap
+from PySide6.QtCore import (
+    Qt, Signal, QObject, QThread, QTimer, Property, QPropertyAnimation, 
+    QEasingCurve, QEvent, QPoint, QPointF
+)
+from PySide6.QtGui import (
+    QFont, QColor, QPainter, QPixmap, QPen, QBrush, QRadialGradient, QLinearGradient
+)
 
 from bot_engine import GoogleFlowBot, is_port_in_use
 import license_manager
@@ -217,6 +223,175 @@ class InstagramLinkWidget(QWidget):
         super().mousePressEvent(event)
 
 
+class CursorCrosshairOverlay(QWidget):
+    """
+    Transparent full-window overlay that renders:
+    - Smooth physics crosshairs and glowing pointer dot tracking the mouse
+    - Real-time dynamic chromatic color changing as mouse moves across the screen
+    - Floating [OPEN INSTAGRAM] badge when hovering over ARCreations header
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+        self.target_x = 200.0
+        self.target_y = 200.0
+        self.curr_x = 200.0
+        self.curr_y = 200.0
+        self.is_inside = False
+        self.is_hover_insta = False
+        self.current_hue = 340.0
+        self.anim_tick = 0
+
+        # 60 FPS animation timer for smooth lerp physics
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_physics)
+        self.timer.start(16)
+
+    def set_mouse_pos(self, x, y, is_inside=True, is_hover_insta=False):
+        self.target_x = float(x)
+        self.target_y = float(y)
+        self.is_inside = is_inside
+        self.is_hover_insta = is_hover_insta
+
+    def update_physics(self):
+        # Smooth lerp physics: 25% step per frame
+        self.curr_x += (self.target_x - self.curr_x) * 0.25
+        self.curr_y += (self.target_y - self.curr_y) * 0.25
+        self.anim_tick = (self.anim_tick + 1) % 3600
+        if self.isVisible():
+            self.update()
+
+    def paintEvent(self, event):
+        if not self.is_inside:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        x = self.curr_x
+        y = self.curr_y
+
+        # Dynamic chromatic color based on mouse position + subtle time drift
+        w = max(self.width(), 1)
+        h = max(self.height(), 1)
+        norm_x = max(0.0, min(1.0, x / w))
+        norm_y = max(0.0, min(1.0, y / h))
+        hue = int((norm_x * 240 + norm_y * 120 + (self.anim_tick * 0.5)) % 360)
+        self.current_hue = hue
+
+        accent_color = QColor.fromHsv(hue, 220, 255)
+        faint_color = QColor.fromHsv(hue, 160, 255, 90)
+        white_glow = QColor(255, 255, 255, 230)
+
+        # 1. Subtle radial ambient cursor halo
+        halo = QRadialGradient(x, y, 45)
+        halo.setColorAt(0.0, QColor.fromHsv(hue, 240, 255, 45))
+        halo.setColorAt(0.5, QColor.fromHsv(hue, 220, 255, 18))
+        halo.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(halo))
+        painter.drawEllipse(QPointF(x, y), 45, 45)
+
+        # 2. Crosshair horizontal and vertical lines
+        pen = QPen(faint_color, 1.2)
+        painter.setPen(pen)
+        painter.drawLine(int(x - 14), int(y), int(x + 14), int(y))
+        painter.drawLine(int(x), int(y - 14), int(x), int(y + 14))
+
+        # 3. Center Glowing Pointer Dot
+        if self.is_hover_insta:
+            painter.setPen(QPen(accent_color, 1.8))
+            painter.setBrush(QBrush(QColor(255, 255, 255, 80)))
+            painter.drawEllipse(QPointF(x, y), 8.5, 8.5)
+        else:
+            dot_grad = QRadialGradient(x, y, 6)
+            dot_grad.setColorAt(0.0, white_glow)
+            dot_grad.setColorAt(0.6, accent_color)
+            dot_grad.setColorAt(1.0, QColor(0, 0, 0, 0))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(dot_grad))
+            painter.drawEllipse(QPointF(x, y), 5.5, 5.5)
+
+
+class ARCreationsHeaderCard(QFrame):
+    """
+    Signature Portfolio-styled ARCREATIONS Brand Header Card.
+    - Contains ONLY the name 'ARCREATIONS' filling the entire box
+    - Styled with the exact font, uppercase tracking, and dual-tone colors from the reference image
+    - Silent clickable link: Clicking anywhere on the box opens the Instagram profile
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("headerCard")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumHeight(64)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(20, 6, 20, 6)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setSpacing(0)
+
+        self.title_label = QLabel()
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+        # Exact font & styling matching the portfolio reference image:
+        # Font: Plus Jakarta Sans / Segoe UI Black, size 26px, weight 900, tracked letter spacing
+        # Dual-tone: A, R, C in bright luminous white (#ffffff), REATIONS in dim slate (#505267)
+        self.default_html = (
+            "<span style=\"font-family: 'Plus Jakarta Sans', 'Segoe UI', 'Impact', sans-serif; "
+            "font-size: 26px; font-weight: 900; letter-spacing: 7px; text-transform: uppercase;\">"
+            "<span style='color: #ffffff;'>A</span>"
+            "<span style='color: #ffffff;'>R</span>"
+            "<span style='color: #ffffff;'>C</span>"
+            "<span style='color: #505267;'>R</span>"
+            "<span style='color: #505267;'>E</span>"
+            "<span style='color: #505267;'>A</span>"
+            "<span style='color: #505267;'>T</span>"
+            "<span style='color: #505267;'>I</span>"
+            "<span style='color: #505267;'>O</span>"
+            "<span style='color: #505267;'>N</span>"
+            "<span style='color: #505267;'>S</span>"
+            "</span>"
+        )
+
+        self.hover_html = (
+            "<span style=\"font-family: 'Plus Jakarta Sans', 'Segoe UI', 'Impact', sans-serif; "
+            "font-size: 26px; font-weight: 900; letter-spacing: 7px; text-transform: uppercase;\">"
+            "<span style='color: #ffffff;'>A</span>"
+            "<span style='color: #ffffff;'>R</span>"
+            "<span style='color: #ffffff;'>C</span>"
+            "<span style='color: #ffffff;'>R</span>"
+            "<span style='color: #ffffff;'>E</span>"
+            "<span style='color: #ffffff;'>A</span>"
+            "<span style='color: #ffffff;'>T</span>"
+            "<span style='color: #ffffff;'>I</span>"
+            "<span style='color: #ffffff;'>O</span>"
+            "<span style='color: #ffffff;'>N</span>"
+            "<span style='color: #ffffff;'>S</span>"
+            "</span>"
+        )
+
+        self.title_label.setText(self.default_html)
+        layout.addWidget(self.title_label)
+
+    def enterEvent(self, event):
+        self.title_label.setText(self.hover_html)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.title_label.setText(self.default_html)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            webbrowser.open(INSTAGRAM_URL)
+        super().mousePressEvent(event)
+
+
 class GlowButton(QPushButton):
     """
     Modern Glassmorphism button equipped with:
@@ -362,11 +537,45 @@ class BotWorker(QThread):
         )
         self.signals.finished.emit()
 
+class BulkWorkerSignals(QObject):
+    log = Signal(str)
+    progress = Signal(int, int)
+    queue_status = Signal(int, int, int, int) # (total, in_flight, completed, remaining)
+    finished = Signal()
+
+class BulkAgentWorker(QThread):
+    def __init__(self, bot, prompts, target_url, concurrency, queue_delay, timeout, char_tag):
+        super().__init__()
+        self.bot = bot
+        self.prompts = prompts
+        self.target_url = target_url
+        self.concurrency = concurrency
+        self.queue_delay = queue_delay
+        self.timeout = timeout
+        self.char_tag = char_tag
+        self.signals = BulkWorkerSignals()
+
+        self.bot.log_callback = lambda msg: self.signals.log.emit(msg)
+        self.bot.progress_callback = lambda cur, tot: self.signals.progress.emit(cur, tot)
+
+    def run(self):
+        self.bot.run_bulk_agent_pipeline(
+            self.prompts,
+            target_url=self.target_url,
+            concurrency=self.concurrency,
+            queue_delay=self.queue_delay,
+            timeout_per_image=self.timeout,
+            character_tag=self.char_tag,
+            status_callback=lambda tot, flt, comp, rem: self.signals.queue_status.emit(tot, flt, comp, rem)
+        )
+        self.signals.finished.emit()
+
 class MainWindow(QMainWindow):
     def __init__(self, requested_profile=None, license_result=None):
         super().__init__()
         self.config_data = load_profiles_config()
         self.worker = None
+        self.bulk_worker = None
         self.license_result = license_result
 
         # Auto-detect profile if not explicitly requested
@@ -421,11 +630,82 @@ class MainWindow(QMainWindow):
         self.status_timer.start(2500)
         self.refresh_profile_statuses()
 
+        # Custom Crosshair Overlay & Event Filter for Realtime Cursor & Color Physics
+        self.cursor_overlay = CursorCrosshairOverlay(self)
+        self.cursor_overlay.setGeometry(0, 0, self.width(), self.height())
+        self.cursor_overlay.raise_()
+        QApplication.instance().installEventFilter(self)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'cursor_overlay'):
+            self.cursor_overlay.setGeometry(0, 0, self.width(), self.height())
+            self.cursor_overlay.raise_()
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.MouseMove:
+            global_pos = event.globalPosition().toPoint()
+            local_pos = self.mapFromGlobal(global_pos)
+            is_inside = self.rect().contains(local_pos)
+
+            is_hover_insta = False
+            if hasattr(self, 'header_card') and self.header_card:
+                header_rect = self.header_card.geometry()
+                if header_rect.contains(local_pos):
+                    is_hover_insta = True
+
+            if hasattr(self, 'cursor_overlay'):
+                self.cursor_overlay.set_mouse_pos(
+                    local_pos.x(), local_pos.y(),
+                    is_inside=is_inside,
+                    is_hover_insta=is_hover_insta
+                )
+
+            # Dynamic color changing on mouse movement
+            if is_inside:
+                self.update_dynamic_colors(local_pos.x(), local_pos.y())
+
+        elif event.type() == QEvent.Leave:
+            if hasattr(self, 'cursor_overlay'):
+                self.cursor_overlay.set_mouse_pos(0, 0, is_inside=False)
+
+        return super().eventFilter(watched, event)
+
+    def update_dynamic_colors(self, x, y):
+        w = max(self.width(), 1)
+        h = max(self.height(), 1)
+        norm_x = max(0.0, min(1.0, x / w))
+        norm_y = max(0.0, min(1.0, y / h))
+        anim_tick = getattr(self.cursor_overlay, 'anim_tick', 0)
+        hue = int((norm_x * 240 + norm_y * 120 + (anim_tick * 0.4)) % 360)
+
+        color_hex = QColor.fromHsv(hue, 220, 255).name()
+
+        if hasattr(self, 'header_card') and self.header_card:
+            self.header_card.setStyleSheet(f"""
+                #headerCard {{
+                    background: rgba(14, 18, 30, 0.82);
+                    border: 1.8px solid {color_hex};
+                    border-radius: 14px;
+                }}
+            """)
+        if hasattr(self, 'header_profile_card') and self.header_profile_card:
+            self.header_profile_card.setStyleSheet(f"""
+                #headerProfileCard {{
+                    background: rgba(22, 16, 28, 0.85);
+                    border: 1.8px solid {color_hex};
+                    border-radius: 14px;
+                }}
+            """)
+
     def closeEvent(self, event):
         release_profile_lock(self.current_profile_id)
         if self.worker and self.worker.isRunning():
             self.bot.stop()
             self.worker.wait(1500)
+        if hasattr(self, 'bulk_worker') and self.bulk_worker and self.bulk_worker.isRunning():
+            self.bot.stop()
+            self.bulk_worker.wait(1500)
         event.accept()
 
     def get_profile_dir(self, pid):
@@ -465,29 +745,9 @@ class MainWindow(QMainWindow):
         header_row = QHBoxLayout()
         header_row.setSpacing(14)
 
-        # Left Header Card
-        header_card = QFrame()
-        header_card.setObjectName("headerCard")
-        h_layout = QHBoxLayout(header_card)
-        h_layout.setContentsMargins(16, 10, 20, 10)
-        h_layout.setSpacing(14)
-
-        shield_lbl = QLabel("🛡️")
-        shield_lbl.setFont(QFont("Segoe UI Emoji", 20))
-        h_layout.addWidget(shield_lbl)
-
-        title_box = QVBoxLayout()
-        title_box.setSpacing(2)
-        title_label = QLabel("ARCreations")
-        title_label.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        title_label.setStyleSheet("color: #ffffff; letter-spacing: 0.5px;")
-
-        self.instagram_link = InstagramLinkWidget()
-        title_box.addWidget(title_label)
-        title_box.addWidget(self.instagram_link)
-        h_layout.addLayout(title_box)
-        h_layout.addStretch()
-        header_row.addWidget(header_card, 3)
+        # Left Header Card: ARCREATIONS Signature Portfolio Header
+        self.header_card = ARCreationsHeaderCard(self)
+        header_row.addWidget(self.header_card, 3)
 
         # Right Header Glowing Profile Card
         self.header_profile_card = QFrame()
@@ -687,7 +947,13 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(right_widget)
         splitter.setSizes([540, 640])
-        main_layout.addWidget(splitter)
+
+        # Pack into Standard Mode Page (Locked, 100% Intact)
+        standard_page = QWidget()
+        standard_layout = QVBoxLayout(standard_page)
+        standard_layout.setContentsMargins(0, 4, 0, 0)
+        standard_layout.setSpacing(10)
+        standard_layout.addWidget(splitter)
 
         # 4. Progress Bar & Action Controls (Glassmorphism Footer Bar)
         bottom_bar = QFrame()
@@ -736,9 +1002,323 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.btn_stop, 1)
 
         bottom_layout.addLayout(btn_row)
-        main_layout.addWidget(bottom_bar)
+        standard_layout.addWidget(bottom_bar)
+
+        # Build Bulk Agent Mode Page
+        bulk_page = self.create_bulk_agent_page()
+
+        # Mode Tab Switcher
+        self.mode_tabs = QTabWidget()
+        self.mode_tabs.setObjectName("modeTabs")
+        self.mode_tabs.addTab(standard_page, "⚡  Standard Mode (Safe Sequential)")
+        self.mode_tabs.addTab(bulk_page, "🚀  Bulk Agent Mode (Fast Pipeline Queue)")
+        main_layout.addWidget(self.mode_tabs)
 
         self.append_log("✨ Ready! Select your profile on the right panel, open Chrome, then click 'Start Batch Generation'.")
+
+    def create_bulk_agent_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(10)
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(8)
+
+        # --- LEFT: BULK PROMPTS WORKSPACE ---
+        left_w = QWidget()
+        left_layout = QVBoxLayout(left_w)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
+        bulk_prompt_grp = QGroupBox("📝  BULK PROMPTS WORKSPACE (100+ PROMPTS)")
+        bp_layout = QVBoxLayout(bulk_prompt_grp)
+        bp_layout.setContentsMargins(14, 16, 14, 14)
+        bp_layout.setSpacing(10)
+
+        self.txt_bulk_prompts = QTextEdit()
+        self.txt_bulk_prompts.setObjectName("txtBulkPrompts")
+        self.txt_bulk_prompts.setPlaceholderText(
+            "Paste bulk prompts here (up to 100+ prompts):\n\n"
+            "(01-0:4) Cinematic establishing wide shot of mythical valley at dawn...\n"
+            "(02-0:4) Ancient temple gates emerging through morning mist...\n"
+            "(03-0:8) Golden dragon ascending into glowing orange clouds...\n"
+            "(04-0:6) Close-up of sacred relic pulsing with emerald light..."
+        )
+        self.txt_bulk_prompts.setFont(QFont("Consolas", 10))
+        self.txt_bulk_prompts.textChanged.connect(self.update_bulk_prompt_count)
+        bp_layout.addWidget(self.txt_bulk_prompts)
+
+        bp_bar = QHBoxLayout()
+        self.lbl_bulk_count = QLabel("Prompts Detected: 0")
+        self.lbl_bulk_count.setStyleSheet("font-weight: 800; color: #38bdf8; font-size: 13px;")
+        bp_bar.addWidget(self.lbl_bulk_count)
+        bp_bar.addStretch()
+
+        btn_load_bulk = GlowButton("📂 Load .txt File", glow_color="#38bdf8")
+        btn_load_bulk.clicked.connect(self.load_bulk_prompts_file)
+        btn_load_bulk.setStyleSheet("background: rgba(18, 22, 36, 0.85); border: 1.2px solid rgba(255, 255, 255, 0.16); border-radius: 8px; padding: 6px 16px; color: #ffffff; font-weight: 600;")
+        bp_bar.addWidget(btn_load_bulk)
+
+        btn_clear_bulk = GlowButton("🗑 Clear", glow_color="#f43f5e")
+        btn_clear_bulk.clicked.connect(lambda: self.txt_bulk_prompts.clear())
+        btn_clear_bulk.setStyleSheet("background: rgba(28, 14, 22, 0.85); border: 1.2px solid rgba(244, 63, 94, 0.35); border-radius: 8px; padding: 6px 16px; color: #fda4af; font-weight: 600;")
+        bp_bar.addWidget(btn_clear_bulk)
+        bp_layout.addLayout(bp_bar)
+
+        left_layout.addWidget(bulk_prompt_grp)
+        splitter.addWidget(left_w)
+
+        # --- RIGHT: AGENT CONTROLS & QUEUE DASHBOARD ---
+        right_w = QWidget()
+        right_layout = QVBoxLayout(right_w)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(10)
+
+        # Card 1: Agent Pipeline Settings
+        settings_grp = QGroupBox("⚙️  AGENT PIPELINE SETTINGS")
+        s_layout = QVBoxLayout(settings_grp)
+        s_layout.setContentsMargins(14, 16, 14, 14)
+        s_layout.setSpacing(10)
+
+        row1 = QHBoxLayout()
+        lbl_c = QLabel("Queue Concurrency:")
+        lbl_c.setStyleSheet("font-weight: 700; color: #cbd5e1;")
+        row1.addWidget(lbl_c)
+        self.spin_bulk_concurrency = QSpinBox()
+        self.spin_bulk_concurrency.setRange(2, 5)
+        self.spin_bulk_concurrency.setValue(3)
+        self.spin_bulk_concurrency.setToolTip("Active concurrent prompt slots maintained in Flow")
+        row1.addWidget(self.spin_bulk_concurrency)
+
+        row1.addSpacing(15)
+        lbl_i = QLabel("Queue Interval:")
+        lbl_i.setStyleSheet("font-weight: 700; color: #cbd5e1;")
+        row1.addWidget(lbl_i)
+        self.spin_bulk_interval = QSpinBox()
+        self.spin_bulk_interval.setRange(1, 10)
+        self.spin_bulk_interval.setValue(3)
+        self.spin_bulk_interval.setSuffix("s")
+        self.spin_bulk_interval.setToolTip("Safe delay between prompt submissions to Flow's queue")
+        row1.addWidget(self.spin_bulk_interval)
+
+        row1.addSpacing(15)
+        lbl_t = QLabel("Image Timeout:")
+        lbl_t.setStyleSheet("font-weight: 700; color: #cbd5e1;")
+        row1.addWidget(lbl_t)
+        self.spin_bulk_timeout = QSpinBox()
+        self.spin_bulk_timeout.setRange(30, 200)
+        self.spin_bulk_timeout.setValue(90)
+        self.spin_bulk_timeout.setSuffix("s")
+        row1.addWidget(self.spin_bulk_timeout)
+        row1.addStretch()
+        s_layout.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        lbl_tag = QLabel("Character Tag:")
+        lbl_tag.setStyleSheet("font-weight: 700; color: #cbd5e1;")
+        row2.addWidget(lbl_tag)
+        self.input_bulk_char = QLineEdit("")
+        self.input_bulk_char.setPlaceholderText("e.g. @Character 1 (optional consistency tag)")
+        row2.addWidget(self.input_bulk_char)
+        s_layout.addLayout(row2)
+
+        info_lbl = QLabel("🛡️ Smart FIFO Pipeline: Prompts are pushed into Flow's queue and matched strictly by sequence number.")
+        info_lbl.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 600;")
+        s_layout.addWidget(info_lbl)
+        right_layout.addWidget(settings_grp)
+
+        # Card 2: Live Queue Visualizer Dashboard
+        dash_grp = QGroupBox("📊  LIVE QUEUE DASHBOARD (PIPELINE VISUALIZER)")
+        dash_layout = QGridLayout(dash_grp)
+        dash_layout.setContentsMargins(14, 16, 14, 14)
+        dash_layout.setSpacing(10)
+
+        def create_metric_card(title, initial_val, color):
+            card = QFrame()
+            card.setStyleSheet(f"background: rgba(10, 14, 26, 0.85); border: 1.2px solid {color}55; border-radius: 8px; padding: 6px;")
+            c_layout = QVBoxLayout(card)
+            c_layout.setContentsMargins(8, 6, 8, 6)
+            c_layout.setSpacing(2)
+            lbl_t = QLabel(title)
+            lbl_t.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: 700;")
+            lbl_v = QLabel(initial_val)
+            lbl_v.setStyleSheet(f"color: {color}; font-size: 16px; font-weight: 800;")
+            c_layout.addWidget(lbl_t)
+            c_layout.addWidget(lbl_v)
+            return card, lbl_v
+
+        c1, self.lbl_q_total = create_metric_card("📦 Total Batch", "0", "#ffffff")
+        c2, self.lbl_q_active = create_metric_card("🚀 In Flow Queue", "0 / 3", "#38bdf8")
+        c3, self.lbl_q_completed = create_metric_card("✅ Saved Images", "0", "#34d399")
+        c4, self.lbl_q_remaining = create_metric_card("⏳ Remaining", "0", "#fb7185")
+
+        dash_layout.addWidget(c1, 0, 0)
+        dash_layout.addWidget(c2, 0, 1)
+        dash_layout.addWidget(c3, 0, 2)
+        dash_layout.addWidget(c4, 0, 3)
+        right_layout.addWidget(dash_grp)
+
+        # Card 3: Bulk Agent Terminal
+        bulk_log_grp = QGroupBox("📋  BULK AGENT TERMINAL")
+        bl_layout = QVBoxLayout(bulk_log_grp)
+        bl_layout.setContentsMargins(14, 16, 14, 14)
+        self.txt_bulk_log = QTextEdit()
+        self.txt_bulk_log.setObjectName("txtBulkLog")
+        self.txt_bulk_log.setReadOnly(True)
+        self.txt_bulk_log.setFont(QFont("Consolas", 9))
+        self.txt_bulk_log.setStyleSheet(
+            "background-color: rgba(6, 8, 16, 0.78); color: #38bdf8; "
+            "border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 8px;"
+        )
+        bl_layout.addWidget(self.txt_bulk_log)
+        right_layout.addWidget(bulk_log_grp)
+
+        splitter.addWidget(right_w)
+        splitter.setSizes([540, 640])
+        layout.addWidget(splitter)
+
+        # Bottom Bar for Bulk Agent
+        bottom_bar = QFrame()
+        bottom_bar.setObjectName("bottomBarBulk")
+        bottom_layout = QVBoxLayout(bottom_bar)
+        bottom_layout.setContentsMargins(18, 10, 18, 10)
+        bottom_layout.setSpacing(8)
+
+        self.bulk_progress_bar = AnimatedProgressBar()
+        self.bulk_progress_bar.setValue(0)
+        self.bulk_progress_bar.setTextVisible(True)
+        self.bulk_progress_bar.setFormat("Agent Idle (%p%)")
+        bottom_layout.addWidget(self.bulk_progress_bar)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+
+        self.btn_bulk_start = GlowButton("🚀 Launch Bulk Agent Pipeline", glow_color="#06b6d4")
+        self.btn_bulk_start.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        self.btn_bulk_start.setStyleSheet(
+            "background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #0284c7, stop:0.5 #0ea5e9, stop:1 #38bdf8); "
+            "color: white; padding: 12px; border-radius: 10px; border: 1.5px solid rgba(255, 255, 255, 0.25);"
+        )
+        self.btn_bulk_start.clicked.connect(self.start_bulk_agent)
+        btn_row.addWidget(self.btn_bulk_start, 3)
+
+        self.btn_bulk_pause = GlowButton("⏸ Pause Queue", glow_color="#f59e0b")
+        self.btn_bulk_pause.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self.btn_bulk_pause.setEnabled(False)
+        self.btn_bulk_pause.setStyleSheet(
+            "background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #b45309, stop:1 #f59e0b); "
+            "color: white; padding: 10px; border-radius: 10px; border: 1.5px solid rgba(255, 255, 255, 0.2);"
+        )
+        self.btn_bulk_pause.clicked.connect(self.toggle_bulk_pause)
+        btn_row.addWidget(self.btn_bulk_pause, 1)
+
+        self.btn_bulk_stop = GlowButton("⏹ Stop Agent", glow_color="#be123c")
+        self.btn_bulk_stop.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self.btn_bulk_stop.setEnabled(False)
+        self.btn_bulk_stop.setStyleSheet(
+            "background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #881337, stop:1 #be123c); "
+            "color: white; padding: 10px; border-radius: 10px; border: 1.5px solid rgba(255, 255, 255, 0.2);"
+        )
+        self.btn_bulk_stop.clicked.connect(self.stop_bulk_agent)
+        btn_row.addWidget(self.btn_bulk_stop, 1)
+
+        bottom_layout.addLayout(btn_row)
+        layout.addWidget(bottom_bar)
+
+        self.append_bulk_log("🚀 Ready! Paste your 100+ prompts on the left and click 'Launch Bulk Agent Pipeline'.")
+        return page
+
+    def update_bulk_prompt_count(self):
+        prompts = parse_prompts_intelligently(self.txt_bulk_prompts.toPlainText())
+        self.lbl_bulk_count.setText(f"Prompts Detected: {len(prompts)}")
+        self.lbl_q_total.setText(str(len(prompts)))
+        self.lbl_q_remaining.setText(str(len(prompts)))
+
+    def load_bulk_prompts_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select Bulk Prompts File", "", "Text Files (*.txt);;All Files (*.*)")
+        if path:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                self.txt_bulk_prompts.setPlainText(content)
+                self.append_bulk_log(f"Loaded prompts file: {path}")
+            except Exception as e:
+                self.append_bulk_log(f"Error reading file: {e}")
+
+    def append_bulk_log(self, message):
+        self.txt_bulk_log.append(message)
+        sb = self.txt_bulk_log.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def update_bulk_progress(self, current, total):
+        pct = int((current / total) * 100) if total > 0 else 0
+        self.bulk_progress_bar.setSmoothValue(pct)
+        self.bulk_progress_bar.setFormat(f"Pipeline: {current} / {total} images saved ({pct}%)")
+
+    def on_bulk_queue_status(self, total, in_flight, completed, remaining):
+        concurrency = self.spin_bulk_concurrency.value()
+        self.lbl_q_total.setText(str(total))
+        self.lbl_q_active.setText(f"{in_flight} / {concurrency}")
+        self.lbl_q_completed.setText(str(completed))
+        self.lbl_q_remaining.setText(str(remaining))
+
+    def start_bulk_agent(self):
+        prompts = parse_prompts_intelligently(self.txt_bulk_prompts.toPlainText())
+        if not prompts:
+            QMessageBox.warning(self, "No Prompts", "Please enter or paste bulk prompts in the Bulk Prompts box!")
+            return
+
+        concurrency = self.spin_bulk_concurrency.value()
+        interval = self.spin_bulk_interval.value()
+        timeout = self.spin_bulk_timeout.value()
+        char_tag = self.input_bulk_char.text().strip()
+
+        self.btn_bulk_start.setEnabled(False)
+        self.btn_bulk_start.start_pulse()
+        self.btn_bulk_pause.setEnabled(True)
+        self.btn_bulk_stop.setEnabled(True)
+        self.bulk_progress_bar.setSmoothValue(0)
+
+        pid = self.current_profile_id
+        label = self.get_profile_label(pid)
+        self.append_bulk_log("\n==========================================")
+        self.append_bulk_log(f"🚀 Launching Bulk Agent Pipeline on Profile {pid} ({label}) [Port: {self.bot.cdp_port}]")
+        self.append_bulk_log(f"🎯 Total Prompts: {len(prompts)} | Concurrency Slots: {concurrency}")
+        self.append_bulk_log("==========================================")
+
+        self.bulk_worker = BulkAgentWorker(
+            self.bot, prompts, "https://flow.google.com",
+            concurrency, interval, timeout, char_tag
+        )
+        self.bulk_worker.signals.log.connect(self.append_bulk_log)
+        self.bulk_worker.signals.progress.connect(self.update_bulk_progress)
+        self.bulk_worker.signals.queue_status.connect(self.on_bulk_queue_status)
+        self.bulk_worker.signals.finished.connect(self.on_bulk_finished)
+        self.bulk_worker.start()
+
+    def toggle_bulk_pause(self):
+        self.bot.pause()
+        if self.bot.is_paused:
+            self.btn_bulk_pause.setText("▶️ Resume Queue")
+            self.btn_bulk_start.stop_pulse()
+        else:
+            self.btn_bulk_pause.setText("⏸ Pause Queue")
+            self.btn_bulk_start.start_pulse()
+
+    def stop_bulk_agent(self):
+        self.bot.stop()
+        self.btn_bulk_stop.setEnabled(False)
+        self.btn_bulk_pause.setEnabled(False)
+        self.btn_bulk_start.setEnabled(True)
+        self.btn_bulk_start.stop_pulse()
+
+    def on_bulk_finished(self):
+        self.btn_bulk_start.setEnabled(True)
+        self.btn_bulk_start.stop_pulse()
+        self.btn_bulk_pause.setEnabled(False)
+        self.btn_bulk_stop.setEnabled(False)
+        self.btn_bulk_pause.setText("⏸ Pause Queue")
+        self.append_bulk_log("✨ Bulk Agent Batch complete! All images saved.")
 
     def on_profile_selected(self, pid):
         if pid == self.current_profile_id:
@@ -794,7 +1374,7 @@ class MainWindow(QMainWindow):
         pid = self.current_profile_id
         label = self.get_profile_label(pid)
         port = self.get_profile_port(pid)
-        self.setWindowTitle(f"Google Flow Auto-Prompter — Profile {pid}: {label} (Port {port})")
+        self.setWindowTitle(f"ARCREATIONS — Google Flow Auto-Prompter — Profile {pid}: {label} (Port {port})")
 
     def update_active_profile_banner(self):
         pid = self.current_profile_id
@@ -805,6 +1385,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'btn_login'):
             self.btn_login.setText(f"▶ Launch (P{pid})")
         self.btn_start.setText(f"🚀 Start Batch Generation (Profile {pid})")
+        if hasattr(self, 'btn_bulk_start'):
+            self.btn_bulk_start.setText(f"🚀 Launch Bulk Agent (Profile {pid})")
 
     def refresh_profile_statuses(self):
         for pid in (1, 2, 3):
@@ -950,6 +1532,36 @@ class MainWindow(QMainWindow):
                 border: 1.5px solid rgba(244, 63, 94, 0.35);
                 border-radius: 14px;
             }
+            #bottomBarBulk {
+                background: rgba(14, 17, 28, 0.82);
+                border: 1.5px solid rgba(14, 165, 233, 0.4);
+                border-radius: 14px;
+            }
+            QTabWidget::pane {
+                border: none;
+                background: transparent;
+            }
+            QTabBar::tab {
+                background: rgba(14, 18, 30, 0.85);
+                border: 1.5px solid rgba(255, 255, 255, 0.12);
+                border-radius: 10px;
+                padding: 8px 24px;
+                margin-right: 12px;
+                margin-bottom: 6px;
+                color: #94a3b8;
+                font-weight: 700;
+                font-size: 12px;
+            }
+            QTabBar::tab:hover {
+                background: rgba(28, 32, 54, 0.95);
+                border-color: rgba(244, 63, 94, 0.6);
+                color: #ffffff;
+            }
+            QTabBar::tab:selected {
+                background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #9f1239, stop:0.5 #e11d48, stop:1 #fb7185);
+                border: 1.5px solid #ffffff;
+                color: #ffffff;
+            }
             QGroupBox {
                 background-color: rgba(12, 15, 26, 0.70);
                 border: 1.5px solid rgba(244, 63, 94, 0.45);
@@ -986,6 +1598,18 @@ class MainWindow(QMainWindow):
             }
             #txtPrompts:focus {
                 border: 1.5px solid #f43f5e;
+                background-color: rgba(12, 14, 24, 0.65);
+            }
+            #txtBulkPrompts {
+                background-color: rgba(8, 10, 18, 0.45);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+                padding: 10px;
+                color: #f8fafc;
+                font-size: 12px;
+            }
+            #txtBulkPrompts:focus {
+                border: 1.5px solid #0ea5e9;
                 background-color: rgba(12, 14, 24, 0.65);
             }
             QLineEdit, QSpinBox {
@@ -1085,6 +1709,9 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app_font = QFont("Plus Jakarta Sans", 9)
+    app_font.setStyleHint(QFont.SansSerif)
+    app.setFont(app_font)
 
     # 1. Remote License & Kill-Switch Check
     lic_res = license_manager.check_license()

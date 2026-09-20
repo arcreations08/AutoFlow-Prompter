@@ -511,3 +511,279 @@ class GoogleFlowBot:
         self.is_paused = not self.is_paused
         status = "Paused ⏸" if self.is_paused else "Resumed ▶️"
         self.log(f"Bot {status}")
+
+    def _submit_prompt_to_flow(self, page, prompt_text, character_tag=""):
+        """Submits a single prompt into Flow via DOM injection and Enter/Send dispatch."""
+        final_prompt = prompt_text.strip()
+        if character_tag and character_tag.strip():
+            if character_tag not in final_prompt:
+                final_prompt = f"{character_tag.strip()} {final_prompt}"
+
+        selectors = [
+            '[placeholder*="What do you want to create" i]',
+            '[placeholder*="create" i]',
+            'textarea[placeholder*="Ask" i]',
+            'textarea[placeholder*="Prompt" i]',
+            'div[contenteditable="true"]',
+            'textarea',
+            'div[role="textbox"]'
+        ]
+
+        input_elem = None
+        for sel in selectors:
+            elements = page.query_selector_all(sel)
+            for elem in reversed(elements):
+                if elem.is_visible():
+                    input_elem = elem
+                    break
+            if input_elem:
+                break
+
+        injected = False
+        if input_elem:
+            try:
+                input_elem.click(timeout=1000)
+            except Exception:
+                pass
+
+            try:
+                js_inject = """
+                (el, text) => {
+                    el.focus();
+                    if (el.isContentEditable) {
+                        el.innerText = text;
+                    } else {
+                        el.value = text;
+                    }
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                """
+                input_elem.evaluate(js_inject, final_prompt)
+                injected = True
+            except Exception:
+                pass
+
+            if not injected:
+                try:
+                    input_elem.fill(final_prompt)
+                    injected = True
+                except Exception:
+                    pass
+
+            if not injected:
+                try:
+                    input_elem.press_sequentially(final_prompt, delay=15)
+                    injected = True
+                except Exception:
+                    pass
+
+        if not injected:
+            try:
+                page.keyboard.press("Control+A")
+                page.keyboard.press("Backspace")
+            except Exception:
+                pass
+            self.human_type(page, final_prompt)
+
+        time.sleep(0.4)
+        if input_elem:
+            try:
+                input_elem.press("Enter")
+            except Exception:
+                page.keyboard.press("Enter")
+        else:
+            page.keyboard.press("Enter")
+
+        send_btn_selectors = [
+            'div:has([placeholder*="create" i]) button',
+            'button[aria-label*="Send" i]',
+            'button[aria-label*="Generate" i]',
+            'button[aria-label*="Submit" i]',
+            'button[type="submit"]'
+        ]
+        for btn_sel in send_btn_selectors:
+            btns = page.query_selector_all(btn_sel)
+            for btn in reversed(btns):
+                if btn and btn.is_visible() and btn.is_enabled():
+                    try:
+                        btn.click(timeout=1000)
+                        break
+                    except Exception:
+                        pass
+        return True
+
+    def run_bulk_agent_pipeline(self, prompts, target_url="https://flow.google.com", 
+                                concurrency=3, queue_delay=3.0, timeout_per_image=90, 
+                                character_tag="", status_callback=None):
+        """
+        Bulk Agent Mode Pipeline:
+        - Maintains up to `concurrency` active rendering slots in Google Flow.
+        - Sequentially injects prompts into Flow's queue with a safe natural delay.
+        - Intercepts incoming completed images and matches them to in-flight prompts.
+        - Guarantees strict filename sequence: [number]-[duration].png (e.g. 01-0.4.png).
+        - Auto-replenishes queue slots as images finish until the entire batch is complete.
+        """
+        self.is_running = True
+        self.is_paused = False
+
+        self.log(f"\n=======================================================")
+        self.log(f"🚀 [BULK AGENT MODE] Starting Fast Queue Pipeline on Profile {self.profile_id}")
+        self.log(f"🎯 Total Prompts: {len(prompts)} | Concurrency Slots: {concurrency}")
+        self.log(f"=======================================================")
+
+        parsed_items = []
+        for i, p in enumerate(prompts):
+            num, dur, clean_prompt, filename_base = parse_prompt_metadata(p, default_idx=i + 1)
+            parsed_items.append({
+                "idx": i + 1,
+                "num": num,
+                "dur": dur,
+                "prompt": clean_prompt,
+                "filename_base": filename_base,
+                "file_name": f"{filename_base}.png",
+                "raw": p,
+                "status": "PENDING"
+            })
+
+        total = len(parsed_items)
+        pending_queue = list(parsed_items)
+        in_flight = []
+        completed = []
+
+        if status_callback:
+            status_callback(total, 0, 0, len(pending_queue))
+        self.progress_callback(0, total)
+
+        profile_out_dir = self.output_dir / f"Profile_{self.profile_id}" if f"Profile_{self.profile_id}" not in str(self.output_dir) else self.output_dir
+        profile_out_dir.mkdir(parents=True, exist_ok=True)
+
+        with sync_playwright() as p:
+            endpoint_url = f"http://127.0.0.1:{self.cdp_port}"
+            self.log(f"Connecting to Chrome on {endpoint_url}...")
+            browser = None
+            try:
+                browser = p.chromium.connect_over_cdp(endpoint_url)
+            except Exception as e:
+                self.log(f"❌ Could not connect to Chrome on port {self.cdp_port}: {e}")
+                self.log(f"💡 Please click '▶ Launch (P{self.profile_id})' in the side panel first!")
+                self.is_running = False
+                return
+
+            context = browser.contexts[0] if browser.contexts else browser.new_context()
+            page = None
+            for pg in context.pages:
+                if "flow.google.com" in pg.url or "imagefx" in pg.url:
+                    page = pg
+                    break
+            if not page:
+                page = context.pages[0] if context.pages else context.new_page()
+
+            if "flow.google.com" not in page.url:
+                self.log(f"Navigating to {target_url}...")
+                page.goto(target_url, timeout=60000)
+                page.wait_for_load_state("domcontentloaded")
+
+            # Network image interceptor
+            captured_images = []
+            def handle_response(response):
+                try:
+                    ct = response.headers.get("content-type", "").lower()
+                    url = response.url.lower()
+                    if ("image/" in ct or "googleusercontent" in url or "blob:" in url) and response.status == 200:
+                        body = response.body()
+                        if is_valid_generated_image(body):
+                            captured_images.append(body)
+                except Exception:
+                    pass
+            page.on("response", handle_response)
+
+            last_status_time = time.time()
+
+            while (pending_queue or in_flight) and self.is_running:
+                while self.is_paused and self.is_running:
+                    time.sleep(0.5)
+
+                if not self.is_running:
+                    break
+
+                # 1. Pipeline Feeding: Keep active in_flight slots filled up to `concurrency`
+                while len(in_flight) < concurrency and pending_queue and self.is_running:
+                    item = pending_queue.pop(0)
+                    self.log(f"📥 [Agent Queue] Pushing Prompt #{item['num']} ({item['file_name']}) into Flow...")
+                    try:
+                        self._submit_prompt_to_flow(page, item['prompt'], character_tag)
+                        item['submitted_at'] = time.time()
+                        item['status'] = 'IN_FLIGHT'
+                        in_flight.append(item)
+                        if status_callback:
+                            status_callback(total, len(in_flight), len(completed), len(pending_queue))
+                    except Exception as e:
+                        self.log(f"⚠️ Error submitting prompt #{item['num']}: {e}")
+                        item['status'] = 'ERROR'
+                        completed.append(item)
+                    
+                    # Safe spacing between submissions so Flow does not drop them
+                    time.sleep(queue_delay)
+
+                # 2. Check for newly captured images
+                if captured_images and in_flight:
+                    # An image has arrived from Flow!
+                    img_bytes = captured_images.pop(0)
+                    # Assign to the earliest in_flight prompt (FIFO matching)
+                    item = in_flight.pop(0)
+                    save_path = profile_out_dir / item['file_name']
+                    try:
+                        with open(save_path, "wb") as f:
+                            f.write(img_bytes)
+                        size_kb = os.path.getsize(save_path) // 1024
+                        self.log(f"⚡ ✅ [Agent Saved #{item['num']}] -> {item['file_name']} ({size_kb} KB) | Active: {len(in_flight)} | Left: {len(pending_queue)}")
+                        item['status'] = 'COMPLETED'
+                        completed.append(item)
+                        self.progress_callback(len(completed), total)
+                        if status_callback:
+                            status_callback(total, len(in_flight), len(completed), len(pending_queue))
+                    except Exception as e:
+                        self.log(f"❌ Error writing file {item['file_name']}: {e}")
+
+                # 3. Check for in-flight timeouts (if image takes too long, fallback to DOM search)
+                now = time.time()
+                for item in list(in_flight):
+                    elapsed = now - item.get('submitted_at', now)
+                    if elapsed > timeout_per_image:
+                        self.log(f"⏳ Prompt #{item['num']} timed out ({int(elapsed)}s). Attempting DOM capture fallback...")
+                        save_path = profile_out_dir / item['file_name']
+                        try:
+                            cards = page.query_selector_all("div:has(img), [role='article'], div[class*='card' i]")
+                            saved = False
+                            for c in reversed(cards):
+                                box = c.bounding_box()
+                                if box and box["width"] > 250 and box["height"] > 250:
+                                    c.screenshot(path=str(save_path))
+                                    self.log(f"📸 Saved fallback screenshot: {item['file_name']}")
+                                    saved = True
+                                    break
+                            if not saved:
+                                page.screenshot(path=str(save_path))
+                        except Exception as e:
+                            self.log(f"Could not fallback capture: {e}")
+                        
+                        in_flight.remove(item)
+                        item['status'] = 'TIMEOUT'
+                        completed.append(item)
+                        self.progress_callback(len(completed), total)
+                        if status_callback:
+                            status_callback(total, len(in_flight), len(completed), len(pending_queue))
+
+                # Periodic status log
+                if time.time() - last_status_time >= 15 and in_flight:
+                    self.log(f"📊 [Agent Status] Active in Flow: {len(in_flight)} | Completed: {len(completed)}/{total} | In Queue: {len(pending_queue)}")
+                    last_status_time = time.time()
+
+                time.sleep(0.8)
+
+            self.log(f"\n🎉✨ [BULK AGENT FINISHED] All {len(completed)} prompts processed! Check: {profile_out_dir}")
+            self.progress_callback(total, total)
+            self.is_running = False
+            if status_callback:
+                status_callback(total, 0, len(completed), 0)
