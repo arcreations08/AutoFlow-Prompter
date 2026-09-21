@@ -22,7 +22,122 @@ from PySide6.QtGui import (
 )
 
 from bot_engine import GoogleFlowBot, is_port_in_use
-import license_manager
+import urllib.request
+import urllib.error
+import hashlib
+import platform
+from datetime import datetime, date
+
+APP_VERSION = "1.0.0"
+
+class LicenseCheckResult:
+    def __init__(self, allowed=True, message="", update_available=False, latest_version="1.0.0", update_url="", client_name=""):
+        self.allowed = allowed
+        self.message = message
+        self.update_available = update_available
+        self.latest_version = latest_version
+        self.update_url = update_url
+        self.client_name = client_name
+
+def get_machine_hwid() -> str:
+    try:
+        ident = f"{platform.node()}-{platform.machine()}-{platform.processor()}"
+        return hashlib.md5(ident.encode()).hexdigest()[:10].upper()
+    except Exception:
+        return "UNKNOWN-DEVICE"
+
+def get_client_license_key(key_file: Path) -> str:
+    if key_file.exists():
+        try:
+            with open(key_file, "r", encoding="utf-8") as f:
+                key = f.read().strip()
+                if key:
+                    return key
+        except Exception:
+            pass
+    return "DEFAULT"
+
+def verify_app_access(key_file: Path, cache_file: Path, remote_url: str = None) -> LicenseCheckResult:
+    url = remote_url or "https://gist.githubusercontent.com/arcreations08/raw/access.json"
+    client_key = get_client_license_key(key_file)
+    hwid = get_machine_hwid()
+
+    remote_data = None
+    try:
+        headers = {
+            "User-Agent": f"ARCreations-Studio/{APP_VERSION}",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache"
+        }
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            remote_data = json.loads(resp.read().decode("utf-8"))
+        try:
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump({"timestamp": datetime.now().isoformat(), "data": remote_data}, f)
+        except Exception:
+            pass
+    except Exception:
+        if cache_file.exists():
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    remote_data = json.load(f).get("data")
+            except Exception:
+                pass
+        if not remote_data:
+            return LicenseCheckResult(
+                allowed=True,
+                message=f"Verified Instance [ID: {hwid}]",
+                client_name="Active Client"
+            )
+
+    # 1. Master Kill-Switch / Status
+    app_status = str(remote_data.get("app_status", "ACTIVE")).upper()
+    if app_status == "BLOCKED":
+        msg = remote_data.get("status_message", "Application access suspended by ARCreations.")
+        return LicenseCheckResult(allowed=False, message=f"🚫 ACCESS REVOKED\n\n{msg}\n\nDevice ID: {hwid}\nContact @arcreations008 on Instagram.")
+    if app_status == "MAINTENANCE":
+        msg = remote_data.get("status_message", "Application undergoing scheduled maintenance.")
+        return LicenseCheckResult(allowed=False, message=f"🛠️ MAINTENANCE MODE\n\n{msg}\n\nPlease try again later.")
+
+    # 2. Check Client Key
+    licenses = remote_data.get("licenses", {})
+    client_info = licenses.get(client_key) or licenses.get("DEFAULT")
+    if not client_info:
+        return LicenseCheckResult(allowed=False, message=f"🚫 INVALID LICENSE KEY\n\nKey '{client_key}' is not authorized.\nDevice ID: {hwid}\n\nContact @arcreations008 on Instagram.")
+
+    if str(client_info.get("status", "ACTIVE")).upper() != "ACTIVE":
+        return LicenseCheckResult(allowed=False, message=f"🚫 SUBSCRIPTION SUSPENDED\n\nAccess deactivated.\nDevice ID: {hwid}\n\nContact @arcreations008 on Instagram.")
+
+    expiry_str = client_info.get("expiry")
+    if expiry_str:
+        try:
+            if date.today() > datetime.strptime(expiry_str, "%Y-%m-%d").date():
+                return LicenseCheckResult(allowed=False, message=f"⚠️ SUBSCRIPTION EXPIRED\n\nExpired on {expiry_str}.\nDevice ID: {hwid}\n\nContact @arcreations008 on Instagram.")
+        except Exception:
+            pass
+
+    latest_version = str(remote_data.get("latest_version", APP_VERSION))
+    update_url = str(remote_data.get("update_url", ""))
+    update_available = False
+    try:
+        def parse_v(v):
+            return [int(x) for x in v.split(".") if x.isdigit()]
+        if parse_v(latest_version) > parse_v(APP_VERSION):
+            update_available = True
+    except Exception:
+        pass
+
+    client_display = client_info.get("client_name", client_key)
+    return LicenseCheckResult(
+        allowed=True,
+        message=f"Licensed to {client_display} [ID: {hwid}]",
+        update_available=update_available,
+        latest_version=latest_version,
+        update_url=update_url,
+        client_name=client_display
+    )
+
 
 if getattr(sys, 'frozen', False):
     CURRENT_DIR = Path(sys.executable).parent.resolve()
@@ -1713,8 +1828,8 @@ if __name__ == "__main__":
     app_font.setStyleHint(QFont.SansSerif)
     app.setFont(app_font)
 
-    # 1. Remote License & Kill-Switch Check
-    lic_res = license_manager.check_license()
+    # 1. Access & Device Verification Check
+    lic_res = verify_app_access(key_file=CURRENT_DIR / "license.key", cache_file=CURRENT_DIR / ".access_cache")
     if not lic_res.allowed:
         msg_box = QMessageBox()
         msg_box.setWindowTitle("ARCreations — Access Verification")
