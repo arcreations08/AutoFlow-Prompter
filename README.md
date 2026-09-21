@@ -5,23 +5,7 @@
 [![UI](https://img.shields.io/badge/UI-PySide6%20Glassmorphism-ff007f.svg)]()
 [![Developer](https://img.shields.io/badge/Instagram-%40arcreations008-E1306C.svg)](https://www.instagram.com/arcreations008/?utm_source=chatgpt.com)
 
-> **Premium Dark Glassmorphism Studio Edition** for batch-prompting and downloading creations on **Google Flow / ImageFX**. Designed for high-volume creators, artists, and studios requiring isolated multi-profile automation, human typing speeds, and safe cooldown routines.
 
----
-
-
-- 👥 **Isolated Multi-Profile Architecture**:
-  - Run up to **3 independent Chrome instances** simultaneously on dedicated remote debugging ports (`9222`, `9223`, `9224`).
-  - Strict process window locks (`P1 🔒`, `P2 🔒`) prevent profile collisions and batch confusion.
-  - Dedicated output subdirectories per profile (`Generated_Images/Profile_1`, etc.).
-
-- ⚡ **Direct DOM Text Injection**:
-  - Element-level text dispatch prevents typing interference or keyboard focus stealing when working across multiple windows.
-
-- 🏷️ **Smart Prompt & Filename Parser**:
-  - Generates clean, production-ready filenames formatted as `[number]-[duration].png` (e.g., `01-0.4.png`).
-
----
 
 ## 📥 Quick Download & Installation
 
